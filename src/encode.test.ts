@@ -78,6 +78,24 @@ describe("normalize", () => {
     expect([kept.width, kept.height]).toEqual([200, 300]);
   });
 
+  it("null keeps a landscape image landscape", async () => {
+    // The first-player token source is 500x419: a portrait correction would turn it a quarter.
+    const out = await sharp(await normalize(await jpeg(500, 419), null)).metadata();
+    expect([out.width, out.height]).toEqual([500, 419]);
+  });
+
+  it("null keeps a portrait image portrait", async () => {
+    const out = await sharp(await normalize(await jpeg(419, 500), null)).metadata();
+    expect([out.width, out.height]).toEqual([419, 500]);
+  });
+
+  it("null still applies the EXIF orientation", async () => {
+    // Stored 300x200, displayed 200x300.
+    const turned = await solid(300, 200, [1, 2, 3]).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+    const out = await sharp(await normalize(turned, null)).metadata();
+    expect([out.width, out.height]).toEqual([200, 300]);
+  });
+
   it("CMYK fixture becomes sRGB", async () => {
     const cmyk = await solid(200, 300, [200, 50, 50]).toColourspace("cmyk").jpeg().toBuffer();
     const inMeta = await sharp(cmyk).metadata();

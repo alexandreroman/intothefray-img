@@ -16,14 +16,19 @@ export async function isLandscape(input: Buffer): Promise<boolean> {
   return width > height;
 }
 
-export async function normalize(input: Buffer, landscape: boolean): Promise<Buffer> {
+/**
+ * Encodes an image as AVIF. `landscape` is the layout of the card face the image belongs to: a
+ * mismatched image turns a quarter to fit it. `null` (an asset, not a card face) keeps the image
+ * in its own orientation; only the EXIF orientation applies.
+ */
+export async function normalize(input: Buffer, landscape: boolean | null): Promise<Buffer> {
   let { width, height } = await orientedSize(input);
   // A single pipeline: no intermediate re-encode before the AVIF output.
   let img = sharp(input).autoOrient();
-  if (landscape && height > width) {
+  if (landscape === true && height > width) {
     img = img.rotate(90);
     [width, height] = [height, width];
-  } else if (!landscape && width > height) {
+  } else if (landscape === false && width > height) {
     // The OCTGN French scans of portrait cards (56128b, 56206b) are stored a quarter clockwise.
     img = img.rotate(-90);
     [width, height] = [height, width];

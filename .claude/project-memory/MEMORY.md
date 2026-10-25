@@ -23,7 +23,7 @@
 
 - [Objective](references/project_objective.md) — card image CDN filler for intothefray, private, run locally
 - [Tech stack](references/project_tech_stack.md) — TypeScript on Node 24, sharp, fflate, AWS S3 SDK, vitest
-- [Image rules](references/project_image_rules.md) — source precedence, AVIF settings, keys, never delete; app has no fallback
+- [Image rules](references/project_image_rules.md) — source precedence, AVIF settings, assets keep orientation, explicit keys, never delete
 - [Cloudflare R2](references/project_cloudflare.md) — bucket, custom domain, token in .env, setup by the user
 - [Card image sources](references/reference_card_sources.md) — OCTGN Drive folders, .o8c layout, download URLs
 - [Commit messages](references/feedback_commit_messages.md) — imperative subject, 50 chars, body explains why

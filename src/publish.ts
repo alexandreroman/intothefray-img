@@ -19,7 +19,7 @@ export type Deps = {
   selectOfficial: (files: DriveFile[]) => DriveFile[];
   fetchPack: (file: DriveFile, cacheDir: string) => Promise<string>;
   readImages: (zipPath: string) => Promise<Map<string, Buffer>>;
-  normalize: (input: Buffer, landscape: boolean) => Promise<Buffer>;
+  normalize: (input: Buffer, landscape: boolean | null) => Promise<Buffer>;
   isLandscape: (input: Buffer) => Promise<boolean>;
   keyOf: (lang: string, code: string, avif: Buffer) => string;
   pickEnglish: (
@@ -45,7 +45,7 @@ export type Opts = {
   client: S3Client;
   bucket: string;
   drive?: { en: string; fr: string };
-  assets?: Record<string, string>;
+  assets?: Record<string, Asset>;
   /** Runs everything but the uploads and the manifest write, and logs the keys to upload. */
   dryRun?: boolean;
   log?: (line: string) => void;
@@ -70,11 +70,21 @@ const DRIVE_EN = "1tp3ue360TCW9fSlfdiJole0hBCDAkQB6";
 const DRIVE_FR = "1Bjn1_GnHFpQ2LvgXXgq106dy824REEvv";
 const listingUrl = (id: string) => `https://drive.google.com/embeddedfolderview?id=${id}`;
 const CEREBRO = "https://pub-d27e6715f4ba4529bc9d8fd13938a5a1.r2.dev/cerebro-cards/";
-export const DEFAULT_ASSETS: Record<string, string> = {
-  "back-player": CEREBRO + "HeroBack.jpg",
-  "back-encounter": CEREBRO + "EncounterBack.jpg",
-  "back-villain": CEREBRO + "VillainBack.jpg",
-  "first-player": "https://card-table.app/images/table/first_player_token_marvelchampions.png",
+/**
+ * A non-card image, published under a fixed key. A published key is served immutable, so a
+ * changed asset takes a new key (e.g. a `-v2` suffix) instead of overwriting the old one.
+ */
+export type Asset = { url: string; key: string };
+
+export const DEFAULT_ASSETS: Record<string, Asset> = {
+  "back-player": { url: CEREBRO + "HeroBack.jpg", key: "assets/back-player.avif" },
+  "back-encounter": { url: CEREBRO + "EncounterBack.jpg", key: "assets/back-encounter.avif" },
+  "back-villain": { url: CEREBRO + "VillainBack.jpg", key: "assets/back-villain.avif" },
+  // v2: v1 was published turned a quarter (portrait correction applied to a landscape token).
+  "first-player": {
+    url: "https://card-table.app/images/table/first_player_token_marvelchampions.png",
+    key: "assets/first-player-v2.avif",
+  },
 };
 
 export type Report = {
@@ -229,7 +239,8 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   // Encoded files stay on disk: the cache holds the AVIF bytes, memory holds only their paths.
   // The in-flight map lets two faces with the same source share one encode.
   const encodes = new Map<string, Promise<string>>();
-  const encodeToCache = async (hash: string, bytes: Buffer, landscape: boolean): Promise<string> => {
+  // `landscape` is null for assets, which keep their own orientation (see normalize).
+  const encodeToCache = async (hash: string, bytes: Buffer, landscape: boolean | null): Promise<string> => {
     const path = join(avifDir, `${hash}.avif`);
     if (existsSync(path)) return path;
     const avif = await deps.normalize(bytes, landscape);
@@ -238,7 +249,8 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
     report.encoded++;
     return path;
   };
-  const encode = (bytes: Buffer, landscape: boolean): Promise<string> => {
+  const encode = (bytes: Buffer, landscape: boolean | null): Promise<string> => {
+    // `${landscape}` is "true", "false" or "null": the three normalizations never share a cache entry.
     const hash = createHash("sha256").update(bytes).update(`|${landscape}|${SETTINGS_VERSION}`).digest("hex");
     let pending = encodes.get(hash);
     if (!pending) {
@@ -283,12 +295,11 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   }
 
   const assets: Record<string, string> = {};
-  for (const [name, url] of Object.entries(opts.assets ?? DEFAULT_ASSETS)) {
-    const bytes = await deps.fetchImage(url, httpDir);
-    if (!bytes) throw new Error(`asset ${name} not loadable: ${url}`);
-    const key = `assets/${name}.avif`;
-    files.set(key, await encode(bytes, false));
-    assets[name] = key;
+  for (const [name, asset] of Object.entries(opts.assets ?? DEFAULT_ASSETS)) {
+    const bytes = await deps.fetchImage(asset.url, httpDir);
+    if (!bytes) throw new Error(`asset ${name} not loadable: ${asset.url}`);
+    files.set(asset.key, await encode(bytes, null));
+    assets[name] = asset.key;
   }
 
   const existing = await deps.listKeys(opts.client, opts.bucket);

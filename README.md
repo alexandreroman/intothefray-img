@@ -24,10 +24,16 @@ What it does, in order:
    portrait image of a landscape face turns a quarter clockwise; a
    landscape image of a portrait face turns a quarter counter-clockwise
    (the OCTGN French scans of 56128b and 56206b are stored that way) and
-   is listed in the report for review.
+   is listed in the report for review. The quarter turns apply to card
+   faces only: assets (card backs, the first-player token) keep their
+   source orientation, with only the EXIF rotation applied.
 5. Lists the bucket once and uploads only the keys it lacks. Face keys
    are `cards/<lang>/<code>.<sha256 hex[:12]>.avif`, so a URL never
    changes its content, and an unchanged image is never uploaded again.
+   Each asset has an explicit, fixed key in `DEFAULT_ASSETS`
+   (`src/publish.ts`), such as `assets/back-player.avif`. A published
+   key is served immutable and is never overwritten, so a changed asset
+   gets a new key (e.g. `assets/first-player-v2.avif`).
 6. Writes `packs/images/manifest.json` in the app, last.
 
 Objects are never deleted from the bucket.
