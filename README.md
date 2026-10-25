@@ -161,3 +161,7 @@ Run `make` to list them.
 - `make verify-cdn [KEY=<key>]`: checks the CDN caches an image.
 - `make test`: runs the vitest suite (`pnpm test`).
 - `make check`: type-checks with `tsc` and runs the test suite.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE).

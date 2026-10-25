@@ -95,4 +95,6 @@ not shared with the team.
 - `.env` holds the R2 credentials and is gitignored. Never
   commit it.
 - Bulk downloads (Drive packs, source images) run only
-  through `make publish`.
+  through the make targets the user runs, `make publish`
+  and `make download`. Research and tests use at most one
+  sample pack.

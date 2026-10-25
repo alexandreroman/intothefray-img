@@ -27,4 +27,4 @@
 - [Cloudflare R2](references/project_cloudflare.md) — bucket, custom domain, token in .env, setup by the user
 - [Card image sources](references/reference_card_sources.md) — OCTGN Drive folders, .o8c layout, download URLs
 - [Commit messages](references/feedback_commit_messages.md) — imperative subject, 50 chars, body explains why
-- [Bulk downloads](references/feedback_bulk_downloads.md) — bulk downloads happen only in a real make publish run
+- [Bulk downloads](references/feedback_bulk_downloads.md) — bulk downloads run via make publish/download; research uses one sample pack
