@@ -32,6 +32,17 @@ describe("selectOfficial", () => {
     ]);
     expect(out.map((x) => [x.id, x.number])).toEqual([["a", 60], ["c", 990]]);
   });
+  it("reads the number from the name of plain { id, name } entries", () => {
+    const out = selectOfficial([
+      { id: "a", name: "060 - Fear No Evil - 2026-08-29.o8c" },
+      { id: "b", name: "998 - FM - Angela (By Odysseus) - x.o8c" },
+      { id: "c", name: "990 - Errata Pack ENG - 20240502.o8c" },
+    ]);
+    expect(out).toEqual([
+      { id: "a", name: "060 - Fear No Evil - 2026-08-29.o8c", number: 60 },
+      { id: "c", name: "990 - Errata Pack ENG - 20240502.o8c", number: 990 },
+    ]);
+  });
   it(".o8c.o8c name accepted", () => {
     const out = selectOfficial([f("x", "032 - Y - z.o8c.o8c", 32), f("y", "057 - Q - fr.o8c", 57)]);
     expect(out.map((x) => x.number)).toEqual([32, 57]);

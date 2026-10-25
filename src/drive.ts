@@ -1,14 +1,19 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export type DriveFile = { id: string; name: string; number: number };
+/** A file of a Drive folder listing. */
+export type DriveEntry = { id: string; name: string };
+
+/** A Drive file with its pack number, the three digits that start its name. */
+export type DriveFile = DriveEntry & { number: number };
 
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 
-const numberOf = (name: string): number => {
-  const m = /^(\d{3})\b/.exec(name);
-  return m ? Number(m[1]) : 0;
-};
+/** The pack number that starts a file name ("060 - Fear No Evil.o8c" is 60), or undefined when there is none. */
+function packNumber(name: string): number | undefined {
+  const match = /^(\d{3})\b/.exec(name);
+  return match ? Number(match[1]) : undefined;
+}
 
 const unescape = (s: string): string =>
   s
@@ -26,7 +31,7 @@ export function parseListing(html: string): DriveFile[] {
     /<div class="flip-entry" id="entry-([\w-]+)"[\s\S]*?<div class="flip-entry-title">([\s\S]*?)<\/div>/g;
   for (const m of html.matchAll(re)) {
     const name = unescape(m[2]).trim();
-    out.push({ id: m[1], name, number: numberOf(name) });
+    out.push({ id: m[1], name, number: packNumber(name) ?? 0 });
   }
   return out;
 }
@@ -41,11 +46,18 @@ export async function fetchListing(url: string, fetchFn: typeof fetch): Promise<
   return res.text();
 }
 
-/** Official packs sorted by number. `number` comes from {@link parseListing}. */
-export function selectOfficial(files: DriveFile[]): DriveFile[] {
-  return files
-    .filter((f) => /^\d{3}\b/.test(f.name) && f.number < 997 && !f.name.includes(" - FM - "))
-    .sort((a, b) => a.number - b.number);
+/**
+ * Official packs sorted by number. The number is read from each name, so plain `{ id, name }` entries work.
+ * Unnumbered names, numbers from 997 up and fan-made (" - FM - ") packs are left out.
+ */
+export function selectOfficial(files: DriveEntry[]): DriveFile[] {
+  const official: DriveFile[] = [];
+  for (const file of files) {
+    const number = packNumber(file.name);
+    if (number === undefined || number >= 997 || file.name.includes(" - FM - ")) continue;
+    official.push({ ...file, number });
+  }
+  return official.sort((a, b) => a.number - b.number);
 }
 
 /** Where {@link fetchPack} caches a pack. */
