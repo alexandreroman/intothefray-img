@@ -43,7 +43,10 @@ function fakes(over: Partial<Deps> = {}, packs: Record<string, Record<string, st
 }
 const opts = () => ({
   appDir, cacheDir, client: {} as never, bucket: "b",
-  assets: { "back-player": "http://a/p.jpg", "first-player": "http://a/t.png" },
+  assets: {
+    "back-player": { url: "http://a/p.jpg", key: "assets/back-player.avif" },
+    "first-player": { url: "http://a/t.png", key: "assets/first-player-v2.avif" },
+  },
 });
 const manifestPath = () => join(appDir, "packs/images/manifest.json");
 const writeSources = (sources: unknown) =>
@@ -99,7 +102,7 @@ describe("publish", () => {
     const r = await runPublish(d, { ...opts(), dryRun: true, log: (l) => lines.push(l) });
     expect(uploads).toHaveLength(0);
     expect(await readFile(manifestPath(), "utf8")).toBe("OLD");
-    expect(r.toUpload).toEqual(["assets/first-player.avif", "cards/en/001.6.avif"]);
+    expect(r.toUpload).toEqual(["assets/first-player-v2.avif", "cards/en/001.6.avif"]);
     expect(lines).toContain("to upload: 2 of 3 keys (1 already in the bucket)");
     expect(lines).toContain("  would upload cards/en/001.6.avif");
   });
@@ -108,10 +111,38 @@ describe("publish", () => {
     await runPublish(fakes({}, { "001": { g1: "x" } }), opts());
     const text = await readFile(manifestPath(), "utf8");
     const m = JSON.parse(text);
-    expect(m.assets).toEqual({ "back-player": "assets/back-player.avif", "first-player": "assets/first-player.avif" });
+    expect(m.assets).toEqual({ "back-player": "assets/back-player.avif", "first-player": "assets/first-player-v2.avif" });
     expect(uploads[0]!.has("assets/back-player.avif")).toBe(true);
     expect(text.endsWith("}\n")).toBe(true);
     expect(text).toContain('\n  "base"');
+  });
+
+  it("default assets keep their published keys, the corrected token a new one", async () => {
+    const { assets: _, ...noAssets } = opts();
+    await runPublish(fakes({}, { "001": { g1: "x" } }), noAssets);
+    const m = JSON.parse(await readFile(manifestPath(), "utf8"));
+    expect(m.assets).toEqual({
+      "back-encounter": "assets/back-encounter.avif",
+      "back-player": "assets/back-player.avif",
+      "back-villain": "assets/back-villain.avif",
+      "first-player": "assets/first-player-v2.avif",
+    });
+  });
+
+  it("normalizes assets in their own orientation and faces by their layout", async () => {
+    const calls = new Map<string, boolean | null>();
+    const d = fakes({
+      normalize: async (b, landscape) => {
+        calls.set(b.toString(), landscape);
+        return Buffer.from("avif:" + b.toString());
+      },
+    }, { "001": { g1: "x" } });
+    await runPublish(d, opts());
+    expect(Object.fromEntries(calls)).toEqual({
+      x: false,
+      "img:http://a/p.jpg": null,
+      "img:http://a/t.png": null,
+    });
   });
 
   it("a language without official packs fails before writing the manifest", async () => {
