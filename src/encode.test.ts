@@ -21,11 +21,28 @@ describe("normalize", () => {
     expect([out.width, out.height]).toEqual([300, 419]);
   });
 
-  it("landscape image stays for landscape face and portrait face", async () => {
-    const a = await sharp(await normalize(await jpeg(492, 699), true)).metadata();
-    expect([a.width, a.height]).toEqual([699, 492]);
-    const b = await sharp(await normalize(await jpeg(699, 492), false)).metadata();
-    expect([b.width, b.height]).toEqual([699, 492]);
+  it("portrait image into landscape face turns", async () => {
+    const out = await sharp(await normalize(await jpeg(492, 699), true)).metadata();
+    expect([out.width, out.height]).toEqual([699, 492]);
+  });
+
+  it("landscape into portrait turns counter-clockwise", async () => {
+    // left half red, right half blue: top-right (blue) must land top-left
+    const left = await solid(300, 400, [255, 0, 0]).png().toBuffer();
+    const right = await solid(300, 400, [0, 0, 255]).png().toBuffer();
+    const src = await sharp({ create: { width: 600, height: 400, channels: 3, background: "#000" } })
+      .composite([{ input: left, top: 0, left: 0 }, { input: right, top: 0, left: 300 }])
+      .png()
+      .toBuffer();
+    const avif = await normalize(src, false);
+    const meta = await sharp(avif).metadata();
+    expect([meta.width, meta.height]).toEqual([400, 600]);
+    const { data } = await sharp(avif).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    expect(data[2]).toBeGreaterThan(150); // top-left blue
+    expect(data[0]).toBeLessThan(100);
+    const last = data.length - 3; // bottom-right is red
+    expect(data[last]).toBeGreaterThan(150);
+    expect(data[last + 2]).toBeLessThan(100);
   });
 
   it("portrait into landscape turns clockwise", async () => {

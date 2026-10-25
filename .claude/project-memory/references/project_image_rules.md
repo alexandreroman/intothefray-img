@@ -17,9 +17,14 @@ type: project
 - Official OCTGN packs only: a leading number below 997 and no " - FM - ".
   Packs apply in number order, so the errata pack (990) wins.
 - Normalize in order: EXIF rotation, a landscape face stored portrait
-  turns a quarter clockwise, conversion to sRGB, short edge at most
+  turns a quarter clockwise, a portrait face stored landscape turns a
+  quarter counter-clockwise, conversion to sRGB, short edge at most
   600 px and never enlarged, AVIF quality 55, effort 6, no metadata.
-  A portrait face with a landscape image is reported, not turned.
+  The OCTGN French scans of 56128b and 56206b are portrait cards stored a
+  quarter clockwise. Each portrait face with a landscape image is listed
+  in the report ("landscape image on portrait face") for review.
+- `SETTINGS_VERSION` in `src/encode.ts` is part of the encode cache key;
+  every change to the normalization bumps it.
 - Face keys: `cards/<lang>/<code>.<first 12 hex of the AVIF sha256>.avif`;
   assets (`back-player`, `back-encounter`, `back-villain`, `first-player`) use
   fixed keys `assets/<name>.avif`. Uploads carry

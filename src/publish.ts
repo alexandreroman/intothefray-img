@@ -82,7 +82,7 @@ export type Report = {
   from: Record<Lang, Record<string, number>>;
   frenchGaps: string[];
   noEnglish: string[];
-  /** `<lang>/<code>` of each portrait face whose image is landscape (reported, not turned). */
+  /** `<lang>/<code>` of each portrait face whose image is landscape (turned counter-clockwise, reported for review). */
   landscapeOnPortrait: string[];
   /** Keys the bucket lacks: uploaded by a real run, only listed by a dry run. */
   toUpload: string[];

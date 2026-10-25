@@ -19,8 +19,12 @@ What it does, in order:
 3. Reads each `.o8c` pack (a zip archive) and picks the English image
    by precedence: Cerebro, then OCTGN EN, then the source record. The
    French image is the OCTGN FR image, if any.
-4. Normalizes each image (EXIF rotation, landscape turn, sRGB, short
-   edge at most 600 px, never enlarged) and encodes it as AVIF.
+4. Normalizes each image (EXIF rotation, orientation turn, sRGB, short
+   edge at most 600 px, never enlarged) and encodes it as AVIF. A
+   portrait image of a landscape face turns a quarter clockwise; a
+   landscape image of a portrait face turns a quarter counter-clockwise
+   (the OCTGN French scans of 56128b and 56206b are stored that way) and
+   is listed in the report for review.
 5. Lists the bucket once and uploads only the keys it lacks. Face keys
    are `cards/<lang>/<code>.<sha256 hex[:12]>.avif`, so a URL never
    changes its content, and an unchanged image is never uploaded again.

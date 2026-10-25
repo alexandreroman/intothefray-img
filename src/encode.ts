@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 
-export const SETTINGS_VERSION = "avif-q55-e6-s600-v1";
+export const SETTINGS_VERSION = "avif-q55-e6-s600-v2";
 const MAX_SHORT_EDGE = 600;
 
 /** Width and height of an image once its EXIF orientation is applied. */
@@ -22,6 +22,10 @@ export async function normalize(input: Buffer, landscape: boolean): Promise<Buff
   let img = sharp(input).autoOrient();
   if (landscape && height > width) {
     img = img.rotate(90);
+    [width, height] = [height, width];
+  } else if (!landscape && width > height) {
+    // The OCTGN French scans of portrait cards (56128b, 56206b) are stored a quarter clockwise.
+    img = img.rotate(-90);
     [width, height] = [height, width];
   }
   const short = Math.min(width, height);
