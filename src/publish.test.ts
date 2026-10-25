@@ -24,7 +24,7 @@ function fakes(over: Partial<Deps> = {}, packs: Record<string, Record<string, st
     readImages: async (zip) => new Map(Object.entries(packs[zip] ?? {}).map(([k, v]) => [k, Buffer.from(v)])),
     normalize: async (b) => { normalizeCalls++; return Buffer.from("avif:" + b.toString()); },
     isLandscape: async () => false,
-    keyOf: (lang, code, avif) => `${lang}/${code}.${avif.toString().length}.avif`,
+    keyOf: (lang, code, avif) => `cards/${lang}/${code}.${avif.toString().length}.avif`,
     pickEnglish: async (f, en) => {
       const b = en.get(f.octgn ?? "");
       return b ? { bytes: b, from: "octgn" } : null;
@@ -61,7 +61,7 @@ describe("publish", () => {
   it("errata wins", async () => {
     await runPublish(fakes({}, { "001": { g1: "first" }, "990": { g1: "errata" } }), opts());
     const m = JSON.parse(await readFile(manifestPath(), "utf8"));
-    expect(m.faces["001"].en.key).toBe("en/001." + "avif:errata".length + ".avif");
+    expect(m.faces["001"].en.key).toBe("cards/en/001." + "avif:errata".length + ".avif");
     const path = uploads[0]!.get(m.faces["001"].en.key)!;
     expect(await readFile(path, "utf8")).toBe("avif:errata");
   });
@@ -99,9 +99,9 @@ describe("publish", () => {
     const r = await runPublish(d, { ...opts(), dryRun: true, log: (l) => lines.push(l) });
     expect(uploads).toHaveLength(0);
     expect(await readFile(manifestPath(), "utf8")).toBe("OLD");
-    expect(r.toUpload).toEqual(["assets/first-player.avif", "en/001.6.avif"]);
+    expect(r.toUpload).toEqual(["assets/first-player.avif", "cards/en/001.6.avif"]);
     expect(lines).toContain("to upload: 2 of 3 keys (1 already in the bucket)");
-    expect(lines).toContain("  would upload en/001.6.avif");
+    expect(lines).toContain("  would upload cards/en/001.6.avif");
   });
 
   it("assets listed", async () => {

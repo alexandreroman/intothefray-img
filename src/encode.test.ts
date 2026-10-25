@@ -94,6 +94,6 @@ describe("isLandscape", () => {
 
 describe("keyOf", () => {
   it("hashes the avif bytes", () => {
-    expect(keyOf("en", "12001a", Buffer.from("x"))).toBe("en/12001a.2d711642b726.avif");
+    expect(keyOf("en", "12001a", Buffer.from("x"))).toBe("cards/en/12001a.2d711642b726.avif");
   });
 });

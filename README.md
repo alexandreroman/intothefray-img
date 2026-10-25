@@ -21,9 +21,9 @@ What it does, in order:
    French image is the OCTGN FR image, if any.
 4. Normalizes each image (EXIF rotation, landscape turn, sRGB, short
    edge at most 600 px, never enlarged) and encodes it as AVIF.
-5. Lists the bucket once and uploads only the keys it lacks. Keys are
-   `<lang>/<code>.<sha256 hex[:12]>.avif`, so a URL never changes its
-   content, and an unchanged image is never uploaded again.
+5. Lists the bucket once and uploads only the keys it lacks. Face keys
+   are `cards/<lang>/<code>.<sha256 hex[:12]>.avif`, so a URL never
+   changes its content, and an unchanged image is never uploaded again.
 6. Writes `packs/images/manifest.json` in the app, last.
 
 Objects are never deleted from the bucket.

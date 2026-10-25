@@ -50,10 +50,10 @@ describe("r2", () => {
 
   it("headers", async () => {
     const { client, calls } = fake(() => ({}));
-    await uploadMissing(client, "bk", onDisk({ "en/a.1.avif": "x" }), new Set());
+    await uploadMissing(client, "bk", onDisk({ "cards/en/a.1.avif": "x" }), new Set());
     expect(calls[0].input).toEqual({
       Bucket: "bk",
-      Key: "en/a.1.avif",
+      Key: "cards/en/a.1.avif",
       Body: Buffer.from("x"),
       ContentType: "image/avif",
       CacheControl: "public, max-age=31536000, immutable",
@@ -62,9 +62,9 @@ describe("r2", () => {
 
   it("uploads only missing, sorted", async () => {
     const { client, calls } = fake(() => ({}));
-    const files = onDisk({ "en/b.2.avif": "b", "en/a.1.avif": "a", "en/c.3.avif": "c" });
-    const out = await uploadMissing(client, "b", files, new Set(["en/a.1.avif"]));
-    expect(out).toEqual(["en/b.2.avif", "en/c.3.avif"]);
+    const files = onDisk({ "cards/en/b.2.avif": "b", "cards/en/a.1.avif": "a", "cards/en/c.3.avif": "c" });
+    const out = await uploadMissing(client, "b", files, new Set(["cards/en/a.1.avif"]));
+    expect(out).toEqual(["cards/en/b.2.avif", "cards/en/c.3.avif"]);
     expect(calls.map((c) => c.constructor.name).every((n) => n === "PutObjectCommand")).toBe(true);
   });
 

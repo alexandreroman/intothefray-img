@@ -38,8 +38,8 @@ describe("types", () => {
       base: "https://img.intothefray.xyz/",
       faces: {
         "12001a": {
-          en: { key: "en/12001a.3f9ac2e1b0d4.avif", from: "cerebro" },
-          fr: { key: "fr/12001a.9b1d07c4e2aa.avif", from: "octgn" },
+          en: { key: "cards/en/12001a.3f9ac2e1b0d4.avif", from: "cerebro" },
+          fr: { key: "cards/fr/12001a.9b1d07c4e2aa.avif", from: "octgn" },
         },
       },
       assets: { "back-player": "assets/back-player.avif" },

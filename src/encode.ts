@@ -37,5 +37,5 @@ export async function normalize(input: Buffer, landscape: boolean): Promise<Buff
 
 export function keyOf(lang: string, code: string, avif: Buffer): string {
   const hash = createHash("sha256").update(avif).digest("hex").slice(0, 12);
-  return `${lang}/${code}.${hash}.avif`;
+  return `cards/${lang}/${code}.${hash}.avif`;
 }

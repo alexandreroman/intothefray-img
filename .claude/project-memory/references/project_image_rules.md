@@ -20,8 +20,8 @@ type: project
   turns a quarter clockwise, conversion to sRGB, short edge at most
   600 px and never enlarged, AVIF quality 55, effort 6, no metadata.
   A portrait face with a landscape image is reported, not turned.
-- Keys: `<lang>/<code>.<first 12 hex of the AVIF sha256>.avif`; assets
-  (`back-player`, `back-encounter`, `back-villain`, `first-player`) use
+- Face keys: `cards/<lang>/<code>.<first 12 hex of the AVIF sha256>.avif`;
+  assets (`back-player`, `back-encounter`, `back-villain`, `first-player`) use
   fixed keys `assets/<name>.avif`. Uploads carry
   `Content-Type: image/avif` and
   `Cache-Control: public, max-age=31536000, immutable`.
