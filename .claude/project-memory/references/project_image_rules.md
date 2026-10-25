@@ -27,6 +27,9 @@ type: project
   `Cache-Control: public, max-age=31536000, immutable`.
 - Objects are never deleted, so every past app commit's URLs keep
   working. The manifest is written only after every upload succeeds.
+- The app loads every image from `img.intothefray.xyz` only, with no
+  fallback to another host, so every face it shows must be published;
+  `make publish` is the fix for a missing image.
 
 **Why:** content-addressed, immutable keys let browsers and Cloudflare
 cache forever; 600 px covers the 298 px preview at 2x.
