@@ -48,12 +48,17 @@ export function selectOfficial(files: DriveFile[]): DriveFile[] {
     .sort((a, b) => a.number - b.number);
 }
 
+/** Where {@link fetchPack} caches a pack. */
+export function packPath(file: DriveFile, cacheDir: string): string {
+  return join(cacheDir, `${file.id}.o8c`);
+}
+
 export async function fetchPack(
   file: DriveFile,
   cacheDir: string,
   fetchFn: typeof fetch,
 ): Promise<string> {
-  const path = join(cacheDir, `${file.id}.o8c`);
+  const path = packPath(file, cacheDir);
   try {
     const cached = await readFile(path);
     if (cached.subarray(0, 4).equals(ZIP_MAGIC)) return path;

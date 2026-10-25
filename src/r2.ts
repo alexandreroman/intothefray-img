@@ -36,6 +36,11 @@ export async function listKeys(client: S3Client, bucket: string): Promise<Set<st
   return keys;
 }
 
+/** The keys the bucket lacks, sorted. */
+export function missingKeys(keys: Iterable<string>, existing: Set<string>): string[] {
+  return [...keys].filter((k) => !existing.has(k)).sort();
+}
+
 /**
  * Uploads each key of `files` (key to local file path) that `existing` lacks, and returns the
  * uploaded keys. Each body is read from disk just before its PUT, so memory holds a few files only.
@@ -46,7 +51,7 @@ export async function uploadMissing(
   files: Map<string, string>,
   existing: Set<string>,
 ): Promise<string[]> {
-  const todo = [...files.keys()].filter((k) => !existing.has(k)).sort();
+  const todo = missingKeys(files.keys(), existing);
   let next = 0;
   const worker = async (): Promise<void> => {
     while (next < todo.length) {

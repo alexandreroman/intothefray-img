@@ -12,7 +12,10 @@ R2), optimized for browsers. It is a private repository
 (`alexandreroman/intothefray-img`); its one user is the app maintainer, who
 runs `make publish` locally. There is no CI job and no scheduled run. The
 app is the public repository `alexandreroman/intothefray`, expected next to
-this one (`APP_DIR`, default `../../intothefray`).
+this one (`APP_DIR`, default `../../intothefray`). When the app is being
+changed in a task worktree, `make publish APP_DIR=<that worktree>` targets
+it; app changes land in that worktree, never on the app's main checkout
+directly.
 
 **Why:** French scans are not hotlinkable anywhere, and one host with
 immutable, optimized images cuts the app's preload weight several times

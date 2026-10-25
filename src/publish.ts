@@ -1,14 +1,15 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
 import type { S3Client } from "@aws-sdk/client-s3";
-import { fetchListing, fetchPack, parseListing, selectOfficial, type DriveFile } from "./drive.ts";
+import { fetchListing, fetchPack, packPath, parseListing, selectOfficial, type DriveFile } from "./drive.ts";
 import { isLandscape, keyOf, normalize, SETTINGS_VERSION } from "./encode.ts";
 import { fetchImage } from "./http.ts";
 import { readImages } from "./o8c.ts";
-import { createClient, listKeys, uploadMissing } from "./r2.ts";
+import { createClient, listKeys, missingKeys, uploadMissing } from "./r2.ts";
 import { pickEnglish, pickFrench, type Picked } from "./resolve.ts";
 import type { Encoded, Manifest, SourceFace } from "./types.ts";
 
@@ -45,10 +46,21 @@ export type Opts = {
   bucket: string;
   drive?: { en: string; fr: string };
   assets?: Record<string, string>;
+  /** Runs everything but the uploads and the manifest write, and logs the keys to upload. */
+  dryRun?: boolean;
   log?: (line: string) => void;
 };
 
-type Lang = "en" | "fr";
+export type DownloadOpts = {
+  cacheDir: string;
+  langs: readonly Lang[];
+  /** Only this pack number, downloaded again even when cached. Without it, every missing pack. */
+  pack?: number;
+  drive?: { en: string; fr: string };
+  log?: (line: string) => void;
+};
+
+export type Lang = "en" | "fr";
 const LANGS: readonly Lang[] = ["en", "fr"];
 
 /** At most this many faces are resolved and encoded at once; http.ts caps downloads separately. */
@@ -72,7 +84,8 @@ export type Report = {
   noEnglish: string[];
   /** `<lang>/<code>` of each portrait face whose image is landscape (reported, not turned). */
   landscapeOnPortrait: string[];
-  uploaded: string[];
+  /** Keys the bucket lacks: uploaded by a real run, only listed by a dry run. */
+  toUpload: string[];
   encoded: number;
 };
 
@@ -89,11 +102,19 @@ async function readSources(appDir: string): Promise<SourceFace[]> {
   return sources.faces;
 }
 
-async function loadPacks(deps: Deps, lang: Lang, folder: string, cacheDir: string): Promise<Map<string, Buffer>> {
+type DriveDeps = Pick<Deps, "fetchText" | "parseListing" | "selectOfficial" | "fetchPack">;
+
+/** The official packs of a Drive folder, sorted by number. An empty listing throws. */
+async function listPacks(deps: DriveDeps, lang: Lang, folder: string): Promise<DriveFile[]> {
   const files = deps.selectOfficial(deps.parseListing(await deps.fetchText(listingUrl(folder))));
   if (files.length === 0) {
     throw new Error(`no official ${lang} pack in Drive folder ${folder}: listing empty or unreadable`);
   }
+  return files;
+}
+
+async function loadPacks(deps: Deps, lang: Lang, folder: string, cacheDir: string): Promise<Map<string, Buffer>> {
+  const files = await listPacks(deps, lang, folder);
   const merged = new Map<string, Buffer>();
   // selectOfficial sorts by pack number, so a later pack (the 990 errata) overrides earlier ones.
   for (const file of files) {
@@ -125,6 +146,42 @@ function sortByKey<T>(record: Record<string, T>): Record<string, T> {
   return Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
+/**
+ * Downloads the official packs into the cache, without encoding or uploading. With `pack`, only
+ * that pack number is fetched, its cache file evicted first so the download is fresh.
+ */
+export async function runDownload(deps: DriveDeps, opts: DownloadOpts): Promise<void> {
+  const log = opts.log ?? (() => {});
+  const drive = opts.drive ?? { en: DRIVE_EN, fr: DRIVE_FR };
+  const packDir = join(opts.cacheDir, "o8c");
+  // List every language first, so an unknown pack number fails before any download.
+  const todo: Array<{ lang: Lang; file: DriveFile }> = [];
+  for (const lang of opts.langs) {
+    const files = await listPacks(deps, lang, drive[lang]);
+    const selected = opts.pack === undefined ? files : files.filter((f) => f.number === opts.pack);
+    if (opts.pack !== undefined && selected.length === 0) log(`${lang}: no official pack ${formatPack(opts.pack)}`);
+    for (const file of selected) todo.push({ lang, file });
+  }
+  if (opts.pack !== undefined && todo.length === 0) {
+    throw new Error(`pack ${formatPack(opts.pack)} is not an official ${opts.langs.join(" or ")} pack`);
+  }
+  let cached = 0;
+  for (const { lang, file } of todo) {
+    const path = packPath(file, packDir);
+    if (opts.pack !== undefined) {
+      await rm(path, { force: true });
+    } else if (existsSync(path)) {
+      cached++;
+      continue;
+    }
+    await deps.fetchPack(file, packDir);
+    log(`${lang}: downloaded ${file.name}`);
+  }
+  log(`downloaded: ${todo.length - cached}, already cached: ${cached}`);
+}
+
+const formatPack = (pack: number): string => String(pack).padStart(3, "0");
+
 export function packOf(code: string): string {
   return code.replace(/\d{3}[a-z]*$/i, "");
 }
@@ -141,7 +198,8 @@ export function formatReport(r: Report, total: number): string[] {
   for (const pack of [...gaps.keys()].sort()) lines.push(`  pack ${pack}: ${gaps.get(pack)}`);
   lines.push(`no english image: ${withList(r.noEnglish)}`);
   lines.push(`landscape image on portrait face: ${withList(r.landscapeOnPortrait)}`);
-  lines.push(`uploaded: ${r.uploaded.length} of ${total} keys`);
+  const inBucket = total - r.toUpload.length;
+  lines.push(`to upload: ${r.toUpload.length} of ${total} keys (${inBucket} already in the bucket)`);
   return lines;
 }
 
@@ -164,7 +222,7 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
     frenchGaps: [],
     noEnglish: [],
     landscapeOnPortrait: [],
-    uploaded: [],
+    toUpload: [],
     encoded: 0,
   };
 
@@ -234,7 +292,14 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   }
 
   const existing = await deps.listKeys(opts.client, opts.bucket);
-  report.uploaded = await deps.uploadMissing(opts.client, opts.bucket, files, existing);
+  report.toUpload = missingKeys(files.keys(), existing);
+  if (opts.dryRun) {
+    for (const line of formatReport(report, files.size)) log(line);
+    for (const key of report.toUpload) log(`  would upload ${key}`);
+    log("dry run: nothing uploaded, manifest not written");
+    return report;
+  }
+  await deps.uploadMissing(opts.client, opts.bucket, files, existing);
 
   // Manifest last: a failed upload above throws before this point.
   const manifest: Manifest = {
@@ -251,11 +316,34 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   return report;
 }
 
+const USAGE = `usage:
+  node src/publish.ts [--app-dir <dir>] [--dry-run]
+  node src/publish.ts --download [--pack <number>] [--lang en|fr]`;
+
+function parseLangs(lang: string | undefined): Lang[] {
+  if (lang === undefined) return ["en", "fr"];
+  if (lang === "en" || lang === "fr") return [lang];
+  throw new Error(`--lang must be en or fr, got "${lang}"\n${USAGE}`);
+}
+
+function parsePack(pack: string | undefined): number | undefined {
+  if (pack === undefined) return undefined;
+  if (!/^\d{1,3}$/.test(pack)) throw new Error(`--pack must be a pack number such as 060, got "${pack}"\n${USAGE}`);
+  return Number(pack);
+}
+
 async function main(): Promise<void> {
+  const { values: args } = parseArgs({
+    options: {
+      "app-dir": { type: "string" },
+      "dry-run": { type: "boolean" },
+      download: { type: "boolean" },
+      pack: { type: "string" },
+      lang: { type: "string" },
+    },
+  });
   // The single place .env is read; existing environment variables are not overridden.
   if (existsSync(".env")) process.loadEnvFile(".env");
-  const bucket = process.env.R2_BUCKET;
-  if (!bucket) throw new Error("missing env R2_BUCKET");
   const deps: Deps = {
     fetchText: (url) => fetchListing(url, fetch),
     parseListing,
@@ -271,8 +359,21 @@ async function main(): Promise<void> {
     listKeys,
     uploadMissing,
   };
-  const appDir = process.argv[2] ?? process.env.APP_DIR ?? "../../intothefray";
-  await runPublish(deps, { appDir, cacheDir: ".cache", client: createClient(process.env), bucket, log: console.log });
+  if (args.download) {
+    const opts = { cacheDir: ".cache", langs: parseLangs(args.lang), pack: parsePack(args.pack), log: console.log };
+    await runDownload(deps, opts);
+    return;
+  }
+  const bucket = process.env.R2_BUCKET;
+  if (!bucket) throw new Error("missing env R2_BUCKET");
+  await runPublish(deps, {
+    appDir: args["app-dir"] ?? process.env.APP_DIR ?? "../../intothefray",
+    cacheDir: ".cache",
+    client: createClient(process.env),
+    bucket,
+    dryRun: args["dry-run"],
+    log: console.log,
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -1,14 +1,17 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { DriveFile } from "./drive.ts";
-import { formatReport, runPublish, type Deps } from "./publish.ts";
+import { formatReport, runDownload, runPublish, type Deps } from "./publish.ts";
 import type { SourceFace } from "./types.ts";
 
 // Fakes mirror the producers' e.g. examples; SUPERLITE_REAL is not wired
 // because the producers are exercised by their own tests.
 let appDir = "", cacheDir = "", normalizeCalls = 0, uploads: Map<string, string>[] = [];
+/** The fake bucket: keys "uploaded" by earlier runs of the same test. */
+let bucket = new Set<string>();
 const face = (code: string, extra: Partial<SourceFace> = {}): SourceFace => ({ code, landscape: false, ...extra });
 
 function fakes(over: Partial<Deps> = {}, packs: Record<string, Record<string, string>> = {}): Deps {
@@ -28,8 +31,13 @@ function fakes(over: Partial<Deps> = {}, packs: Record<string, Record<string, st
     },
     pickFrench: () => null,
     fetchImage: async (u) => Buffer.from("img:" + u),
-    listKeys: async () => new Set(),
-    uploadMissing: async (_c, _b, f, ex) => { uploads.push(f); return [...f.keys()].filter((k) => !ex.has(k)); },
+    listKeys: async () => new Set(bucket),
+    uploadMissing: async (_c, _b, f, ex) => {
+      uploads.push(f);
+      const missing = [...f.keys()].filter((k) => !ex.has(k));
+      for (const k of missing) bucket.add(k);
+      return missing;
+    },
     ...over,
   };
 }
@@ -46,7 +54,7 @@ beforeEach(async () => {
   appDir = join(root, "app"); cacheDir = join(root, "cache");
   await mkdir(join(appDir, "packs/images"), { recursive: true });
   await writeSources({ version: 1, faces: [face("001", { octgn: "g1" })] });
-  normalizeCalls = 0; uploads = [];
+  normalizeCalls = 0; uploads = []; bucket = new Set();
 });
 
 describe("publish", () => {
@@ -70,14 +78,30 @@ describe("publish", () => {
     expect(await readFile(manifestPath(), "utf8")).toBe("OLD");
   });
 
-  it("rerun encodes nothing", async () => {
+  it("rerun with nothing new encodes and uploads nothing", async () => {
     const d = fakes({}, { "001": { g1: "x" } });
-    await runPublish(d, opts());
-    const first = normalizeCalls;
-    expect(first).toBe(3);
-    const r = await runPublish(d, opts());
-    expect(normalizeCalls).toBe(first);
+    const first = await runPublish(d, opts());
+    expect(normalizeCalls).toBe(3);
+    expect(first.toUpload).toHaveLength(3);
+    const lines: string[] = [];
+    const r = await runPublish(d, { ...opts(), log: (l) => lines.push(l) });
+    expect(normalizeCalls).toBe(3);
     expect(r.encoded).toBe(0);
+    expect(r.toUpload).toEqual([]);
+    expect(lines).toContain("to upload: 0 of 3 keys (3 already in the bucket)");
+  });
+
+  it("dry run lists the keys to upload, uploads nothing and keeps the manifest", async () => {
+    await writeFile(manifestPath(), "OLD");
+    bucket = new Set(["assets/back-player.avif"]);
+    const lines: string[] = [];
+    const d = fakes({}, { "001": { g1: "x" } });
+    const r = await runPublish(d, { ...opts(), dryRun: true, log: (l) => lines.push(l) });
+    expect(uploads).toHaveLength(0);
+    expect(await readFile(manifestPath(), "utf8")).toBe("OLD");
+    expect(r.toUpload).toEqual(["assets/first-player.avif", "en/001.6.avif"]);
+    expect(lines).toContain("to upload: 2 of 3 keys (1 already in the bucket)");
+    expect(lines).toContain("  would upload en/001.6.avif");
   });
 
   it("assets listed", async () => {
@@ -147,7 +171,7 @@ describe("report", () => {
       faces: { en: 5, fr: 2 }, from: { en: { octgn: 2, cerebro: 3 }, fr: { octgn: 2 } },
       frenchGaps: ["12001a", "12001b", "01097b"], noEnglish: ["62001a"],
       landscapeOnPortrait: ["en/40001a", "fr/40001a"],
-      uploaded: ["k"], encoded: 0,
+      toUpload: ["k"], encoded: 0,
     }, 9);
     expect(lines).toEqual([
       "faces: en 5, fr 2",
@@ -159,16 +183,72 @@ describe("report", () => {
       "  pack 12: 2",
       "no english image: 1 (62001a)",
       "landscape image on portrait face: 2 (en/40001a, fr/40001a)",
-      "uploaded: 1 of 9 keys",
+      "to upload: 1 of 9 keys (8 already in the bucket)",
     ]);
   });
 
   it("prints zero counts without a list", () => {
     const lines = formatReport({
       faces: { en: 0, fr: 0 }, from: { en: {}, fr: {} }, frenchGaps: [], noEnglish: [],
-      landscapeOnPortrait: [], uploaded: [], encoded: 0,
+      landscapeOnPortrait: [], toUpload: [], encoded: 0,
     }, 0);
     expect(lines).toContain("no english image: 0");
     expect(lines).toContain("landscape image on portrait face: 0");
+  });
+});
+
+describe("download", () => {
+  // Drive listings: the EN folder has packs 001 and 060, the FR folder 001 only.
+  const listings: Record<string, DriveFile[]> = {
+    en: [{ id: "en1", name: "001 - Core.o8c", number: 1 }, { id: "en60", name: "060 - Fear.o8c", number: 60 }],
+    fr: [{ id: "fr1", name: "001 - Base - fr.o8c", number: 1 }],
+  };
+  const drive = { en: "en", fr: "fr" };
+  let fetched: string[] = [];
+  const deps = {
+    fetchText: async (url: string) => url.slice(url.indexOf("id=") + 3),
+    parseListing: (folder: string) => listings[folder] ?? [],
+    selectOfficial: (files: DriveFile[]) => files,
+    fetchPack: async (file: DriveFile, dir: string) => {
+      // Mirrors fetchPack: a cached file is not downloaded again.
+      const path = join(dir, `${file.id}.o8c`);
+      if (!existsSync(path)) {
+        fetched.push(file.id);
+        await mkdir(dir, { recursive: true });
+        await writeFile(path, "zip");
+      }
+      return path;
+    },
+  };
+  const cachePack = async (id: string) => {
+    await mkdir(join(cacheDir, "o8c"), { recursive: true });
+    await writeFile(join(cacheDir, "o8c", `${id}.o8c`), "old");
+  };
+  beforeEach(() => { fetched = []; });
+
+  it("fetches every pack missing from the cache", async () => {
+    await cachePack("en1");
+    const lines: string[] = [];
+    await runDownload(deps, { cacheDir, langs: ["en", "fr"], drive, log: (l) => lines.push(l) });
+    expect(fetched).toEqual(["en60", "fr1"]);
+    expect(lines).toContain("downloaded: 2, already cached: 1");
+  });
+
+  it("PACK downloads that pack again, even when cached", async () => {
+    await cachePack("en60");
+    await runDownload(deps, { cacheDir, langs: ["en", "fr"], drive, pack: 60 });
+    expect(fetched).toEqual(["en60"]);
+    expect(await readFile(join(cacheDir, "o8c", "en60.o8c"), "utf8")).toBe("zip");
+  });
+
+  it("LANG limits the download to one language", async () => {
+    await runDownload(deps, { cacheDir, langs: ["fr"], drive });
+    expect(fetched).toEqual(["fr1"]);
+  });
+
+  it("an unknown pack number fails before any download", async () => {
+    await expect(runDownload(deps, { cacheDir, langs: ["en", "fr"], drive, pack: 61 }))
+      .rejects.toThrow("pack 061 is not an official en or fr pack");
+    expect(fetched).toEqual([]);
   });
 });

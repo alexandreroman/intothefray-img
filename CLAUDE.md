@@ -15,11 +15,14 @@ See [README.md](README.md) for full documentation.
 ## Build & run
 
 ```sh
-make install   # pnpm install --frozen-lockfile
-make check     # tsc --noEmit, then the test suite
-make test      # vitest suite only
-make publish   # sync sources, upload new images, write manifest
-make refresh   # empty .cache/
+make install                  # pnpm install --frozen-lockfile
+make check                    # tsc --noEmit, then the test suite
+make test                     # vitest suite only
+make download                 # missing packs (PACK=060: force one, LANG=en|fr)
+make publish                  # sync sources, upload new images, write manifest
+make publish DRY_RUN=1        # everything but uploads, manifest and app packs
+make refresh                  # empty .cache/ (CACHE=o8c|http|avif: one cache)
+make verify-cdn               # two GETs, second must be a cache HIT (KEY=<key>)
 ```
 
 ## Modules
@@ -31,7 +34,9 @@ make refresh   # empty .cache/
 - `src/http.ts`: downloads source images, cached by URL hash
 - `src/resolve.ts`: picks the English and French image of each face
 - `src/r2.ts`: lists the bucket and uploads the missing keys
-- `src/publish.ts`: the publish flow that ties the modules together
+- `src/publish.ts`: the publish flow that ties the modules together, and
+  the pack download mode (`--download`)
+- `scripts/verify-cdn.sh`: checks the CDN cache headers of one key
 
 ## Agents
 

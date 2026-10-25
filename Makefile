@@ -5,6 +5,11 @@
 
 APP_DIR ?= ../../intothefray
 
+# LANG is also the shell's locale variable, so it selects a language only
+# when given on the make command line.
+PACK_ARGS = $(if $(PACK),--pack $(PACK)) \
+	$(if $(filter command line,$(origin LANG)),--lang $(LANG))
+
 ##@ Setup
 
 .PHONY: install
@@ -13,15 +18,29 @@ install: ## Install dependencies from the lockfile
 
 ##@ Publish
 
+.PHONY: download
+download: ## Download missing packs; PACK=060 forces one pack, LANG=en|fr one language
+	node src/publish.ts --download $(PACK_ARGS)
+
 .PHONY: publish
-publish: ## Sync sources, upload new images and write the manifest
+publish: ## Sync sources, upload new images, write the manifest (DRY_RUN=1: no upload)
 	$(MAKE) -C $(APP_DIR) sources
-	node src/publish.ts $(APP_DIR)
-	$(MAKE) -C $(APP_DIR) packs
+	node src/publish.ts --app-dir $(APP_DIR) $(if $(DRY_RUN),--dry-run)
+	$(if $(DRY_RUN),,$(MAKE) -C $(APP_DIR) packs)
+
+##@ Caches
 
 .PHONY: refresh
-refresh: ## Empty the download and encode caches (.cache/)
-	rm -rf .cache
+refresh: ## Empty .cache/, or one cache with CACHE=o8c|http|avif
+	@case "$(CACHE)" in \
+	  "") rm -rf .cache ;; \
+	  o8c|http|avif) rm -rf .cache/$(CACHE) ;; \
+	  *) echo "CACHE must be o8c, http or avif, got \"$(CACHE)\"" >&2; exit 1 ;; \
+	esac
+
+.PHONY: verify-cdn
+verify-cdn: ## Check the CDN caches KEY (default: a key of the app manifest)
+	scripts/verify-cdn.sh "$(KEY)" "$(APP_DIR)/packs/images/manifest.json"
 
 ##@ Quality
 
