@@ -18,6 +18,30 @@ describe("fetchImage", () => {
     const f = (async () => resp("no", "image/jpeg", 404)) as typeof fetch;
     expect(await fetchImage("http://x/b.jpg", await dir(), f)).toBeNull();
   });
+  it("403 and 410 are null", async () => {
+    for (const status of [403, 410]) {
+      const f = (async () => resp("no", "text/html", status)) as typeof fetch;
+      expect(await fetchImage(`http://x/${status}.jpg`, await dir(), f)).toBeNull();
+    }
+  });
+  it("429 and 5xx retry, then load", async () => {
+    const answers = [resp("slow", "text/plain", 429), resp("down", "text/plain", 503), resp("img", "image/jpeg")];
+    let n = 0;
+    const f = (async () => answers[n++]) as typeof fetch;
+    const b = await fetchImage("http://x/retry.jpg", await dir(), f, [0, 0, 0]);
+    expect(b?.toString()).toBe("img");
+    expect(n).toBe(3);
+  });
+  it("persistent 5xx throws instead of returning null", async () => {
+    let n = 0;
+    const f = (async () => (n++, resp("down", "text/plain", 502))) as typeof fetch;
+    await expect(fetchImage("http://x/down.jpg", await dir(), f, [0, 0])).rejects.toThrow("HTTP 502 after 3 attempts");
+    expect(n).toBe(3);
+  });
+  it("other errors throw", async () => {
+    const f = (async () => resp("no", "text/plain", 401)) as typeof fetch;
+    await expect(fetchImage("http://x/auth.jpg", await dir(), f)).rejects.toThrow("HTTP 401");
+  });
   it("UA sent", async () => {
     let ua: string | null = null;
     const f = (async (_u: unknown, init?: RequestInit) => {

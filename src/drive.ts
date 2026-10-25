@@ -31,9 +31,19 @@ export function parseListing(html: string): DriveFile[] {
   return out;
 }
 
+/** Fetches a Drive folder's embedded listing page. An HTTP error throws. */
+export async function fetchListing(url: string, fetchFn: typeof fetch): Promise<string> {
+  const res = await fetchFn(url);
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new Error(`drive listing ${url}: HTTP ${res.status}`);
+  }
+  return res.text();
+}
+
+/** Official packs sorted by number. `number` comes from {@link parseListing}. */
 export function selectOfficial(files: DriveFile[]): DriveFile[] {
   return files
-    .map((f) => ({ ...f, number: numberOf(f.name) }))
     .filter((f) => /^\d{3}\b/.test(f.name) && f.number < 997 && !f.name.includes(" - FM - "))
     .sort((a, b) => a.number - b.number);
 }

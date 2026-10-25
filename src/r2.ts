@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   ListObjectsV2Command,
   PutObjectCommand,
@@ -35,10 +36,14 @@ export async function listKeys(client: S3Client, bucket: string): Promise<Set<st
   return keys;
 }
 
+/**
+ * Uploads each key of `files` (key to local file path) that `existing` lacks, and returns the
+ * uploaded keys. Each body is read from disk just before its PUT, so memory holds a few files only.
+ */
 export async function uploadMissing(
   client: S3Client,
   bucket: string,
-  files: Map<string, Buffer>,
+  files: Map<string, string>,
   existing: Set<string>,
 ): Promise<string[]> {
   const todo = [...files.keys()].filter((k) => !existing.has(k)).sort();
@@ -50,7 +55,7 @@ export async function uploadMissing(
         new PutObjectCommand({
           Bucket: bucket,
           Key: key,
-          Body: files.get(key)!,
+          Body: await readFile(files.get(key)!),
           ContentType: "image/avif",
           CacheControl: "public, max-age=31536000, immutable",
         }),

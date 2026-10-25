@@ -3,12 +3,14 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { SourceFace } from "./types.ts";
-
-export type DriveFile = { id: string; name: string; number: number };
-type Picked = { bytes: Buffer; from: string };
 import type { S3Client } from "@aws-sdk/client-s3";
-type S3ClientLike = S3Client;
+import { fetchListing, fetchPack, parseListing, selectOfficial, type DriveFile } from "./drive.ts";
+import { isLandscape, keyOf, normalize, SETTINGS_VERSION } from "./encode.ts";
+import { fetchImage } from "./http.ts";
+import { readImages } from "./o8c.ts";
+import { createClient, listKeys, uploadMissing } from "./r2.ts";
+import { pickEnglish, pickFrench, type Picked } from "./resolve.ts";
+import type { Encoded, Manifest, SourceFace } from "./types.ts";
 
 export type Deps = {
   fetchText: (url: string) => Promise<string>;
@@ -17,6 +19,7 @@ export type Deps = {
   fetchPack: (file: DriveFile, cacheDir: string) => Promise<string>;
   readImages: (zipPath: string) => Promise<Map<string, Buffer>>;
   normalize: (input: Buffer, landscape: boolean) => Promise<Buffer>;
+  isLandscape: (input: Buffer) => Promise<boolean>;
   keyOf: (lang: string, code: string, avif: Buffer) => string;
   pickEnglish: (
     face: SourceFace,
@@ -25,11 +28,12 @@ export type Deps = {
   ) => Promise<Picked | null>;
   pickFrench: (face: SourceFace, octgnFr: Map<string, Buffer>) => Picked | null;
   fetchImage: (url: string, cacheDir: string) => Promise<Buffer | null>;
-  listKeys: (client: S3ClientLike, bucket: string) => Promise<Set<string>>;
+  listKeys: (client: S3Client, bucket: string) => Promise<Set<string>>;
+  /** `files` maps each key to the local path of its AVIF file. */
   uploadMissing: (
-    client: S3ClientLike,
+    client: S3Client,
     bucket: string,
-    files: Map<string, Buffer>,
+    files: Map<string, string>,
     existing: Set<string>,
   ) => Promise<string[]>;
 };
@@ -37,14 +41,19 @@ export type Deps = {
 export type Opts = {
   appDir: string;
   cacheDir: string;
-  client: S3ClientLike;
+  client: S3Client;
   bucket: string;
   drive?: { en: string; fr: string };
   assets?: Record<string, string>;
   log?: (line: string) => void;
 };
 
-export const SETTINGS_VERSION = "avif-q55-e6-600-v1";
+type Lang = "en" | "fr";
+const LANGS: readonly Lang[] = ["en", "fr"];
+
+/** At most this many faces are resolved and encoded at once; http.ts caps downloads separately. */
+const FACE_CONCURRENCY = 4;
+const BASE_URL = "https://img.intothefray.xyz/";
 const DRIVE_EN = "1tp3ue360TCW9fSlfdiJole0hBCDAkQB6";
 const DRIVE_FR = "1Bjn1_GnHFpQ2LvgXXgq106dy824REEvv";
 const listingUrl = (id: string) => `https://drive.google.com/embeddedfolderview?id=${id}`;
@@ -57,22 +66,63 @@ export const DEFAULT_ASSETS: Record<string, string> = {
 };
 
 export type Report = {
-  faces: { en: number; fr: number };
-  from: Record<string, number>;
+  faces: Record<Lang, number>;
+  from: Record<Lang, Record<string, number>>;
   frenchGaps: string[];
   noEnglish: string[];
+  /** `<lang>/<code>` of each portrait face whose image is landscape (reported, not turned). */
+  landscapeOnPortrait: string[];
   uploaded: string[];
   encoded: number;
 };
 
-async function loadPacks(deps: Deps, folder: string, cacheDir: string): Promise<Map<string, Buffer>> {
+/** One encoded image of a face, with its AVIF file in the encode cache. */
+type FaceImage = Encoded & { path: string; landscapeOnPortrait: boolean };
+type FaceResult = { code: string; en: FaceImage | null; fr: FaceImage | null };
+
+async function readSources(appDir: string): Promise<SourceFace[]> {
+  const path = join(appDir, "packs/images/sources.json");
+  const sources = JSON.parse(await readFile(path, "utf8")) as { version?: unknown; faces: SourceFace[] };
+  if (sources.version !== 1) {
+    throw new Error(`${path}: unsupported version ${JSON.stringify(sources.version)}, expected 1`);
+  }
+  return sources.faces;
+}
+
+async function loadPacks(deps: Deps, lang: Lang, folder: string, cacheDir: string): Promise<Map<string, Buffer>> {
   const files = deps.selectOfficial(deps.parseListing(await deps.fetchText(listingUrl(folder))));
+  if (files.length === 0) {
+    throw new Error(`no official ${lang} pack in Drive folder ${folder}: listing empty or unreadable`);
+  }
   const merged = new Map<string, Buffer>();
-  for (const f of [...files].sort((a, b) => a.number - b.number)) {
-    const zip = await deps.fetchPack(f, join(cacheDir, "o8c"));
-    for (const [k, v] of await deps.readImages(zip)) merged.set(k, v); // later packs win
+  // selectOfficial sorts by pack number, so a later pack (the 990 errata) overrides earlier ones.
+  for (const file of files) {
+    const zip = await deps.fetchPack(file, join(cacheDir, "o8c"));
+    for (const [stem, bytes] of await deps.readImages(zip)) merged.set(stem, bytes);
   }
   return merged;
+}
+
+/** Calls `fn` on every item with at most `limit` calls in flight. Results keep the input order. */
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+function sortByKey<T>(record: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 }
 
 export function packOf(code: string): string {
@@ -81,78 +131,105 @@ export function packOf(code: string): string {
 
 export function formatReport(r: Report, total: number): string[] {
   const lines = [`faces: en ${r.faces.en}, fr ${r.faces.fr}`];
-  for (const k of Object.keys(r.from).sort()) lines.push(`from ${k}: ${r.from[k]}`);
+  for (const lang of LANGS) {
+    const counts = r.from[lang];
+    for (const source of Object.keys(counts).sort()) lines.push(`${lang} from ${source}: ${counts[source]}`);
+  }
   const gaps = new Map<string, number>();
-  for (const c of r.frenchGaps) gaps.set(packOf(c), (gaps.get(packOf(c)) ?? 0) + 1);
+  for (const code of r.frenchGaps) gaps.set(packOf(code), (gaps.get(packOf(code)) ?? 0) + 1);
   lines.push(`french gaps: ${r.frenchGaps.length}`);
-  for (const p of [...gaps.keys()].sort()) lines.push(`  pack ${p}: ${gaps.get(p)}`);
-  lines.push(`no english image: ${r.noEnglish.length}${r.noEnglish.length ? " (" + r.noEnglish.join(", ") + ")" : ""}`);
+  for (const pack of [...gaps.keys()].sort()) lines.push(`  pack ${pack}: ${gaps.get(pack)}`);
+  lines.push(`no english image: ${withList(r.noEnglish)}`);
+  lines.push(`landscape image on portrait face: ${withList(r.landscapeOnPortrait)}`);
   lines.push(`uploaded: ${r.uploaded.length} of ${total} keys`);
   return lines;
 }
 
+function withList(items: string[]): string {
+  return items.length === 0 ? "0" : `${items.length} (${items.join(", ")})`;
+}
+
 export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   const log = opts.log ?? (() => {});
-  const sourcesPath = join(opts.appDir, "packs/images/sources.json");
-  const sources = JSON.parse(await readFile(sourcesPath, "utf8")) as { faces: SourceFace[] };
+  const faces = await readSources(opts.appDir);
   const drive = opts.drive ?? { en: DRIVE_EN, fr: DRIVE_FR };
-  const [octgnEn, octgnFr] = [
-    await loadPacks(deps, drive.en, opts.cacheDir),
-    await loadPacks(deps, drive.fr, opts.cacheDir),
-  ];
+  const octgnEn = await loadPacks(deps, "en", drive.en, opts.cacheDir);
+  const octgnFr = await loadPacks(deps, "fr", drive.fr, opts.cacheDir);
   const httpDir = join(opts.cacheDir, "http");
   const avifDir = join(opts.cacheDir, "avif");
   await mkdir(avifDir, { recursive: true });
-  const report: Report = { faces: { en: 0, fr: 0 }, from: {}, frenchGaps: [], noEnglish: [], uploaded: [], encoded: 0 };
-
-  const encode = async (bytes: Buffer, landscape: boolean): Promise<Buffer> => {
-    const h = createHash("sha256").update(bytes).update(`|${landscape}|${SETTINGS_VERSION}`).digest("hex");
-    const p = join(avifDir, `${h}.avif`);
-    if (existsSync(p)) return readFile(p);
-    const out = await deps.normalize(bytes, landscape);
-    await writeFile(p + ".tmp", out);
-    await rename(p + ".tmp", p);
-    report.encoded++;
-    return out;
+  const report: Report = {
+    faces: { en: 0, fr: 0 },
+    from: { en: {}, fr: {} },
+    frenchGaps: [],
+    noEnglish: [],
+    landscapeOnPortrait: [],
+    uploaded: [],
+    encoded: 0,
   };
 
-  const files = new Map<string, Buffer>();
-  const faces: Record<string, Record<string, { key: string; from: string }>> = {};
+  // Encoded files stay on disk: the cache holds the AVIF bytes, memory holds only their paths.
+  // The in-flight map lets two faces with the same source share one encode.
+  const encodes = new Map<string, Promise<string>>();
+  const encodeToCache = async (hash: string, bytes: Buffer, landscape: boolean): Promise<string> => {
+    const path = join(avifDir, `${hash}.avif`);
+    if (existsSync(path)) return path;
+    const avif = await deps.normalize(bytes, landscape);
+    await writeFile(path + ".tmp", avif);
+    await rename(path + ".tmp", path);
+    report.encoded++;
+    return path;
+  };
+  const encode = (bytes: Buffer, landscape: boolean): Promise<string> => {
+    const hash = createHash("sha256").update(bytes).update(`|${landscape}|${SETTINGS_VERSION}`).digest("hex");
+    let pending = encodes.get(hash);
+    if (!pending) {
+      pending = encodeToCache(hash, bytes, landscape);
+      encodes.set(hash, pending);
+    }
+    return pending;
+  };
+
+  const encodeFace = async (lang: Lang, face: SourceFace, picked: Picked | null): Promise<FaceImage | null> => {
+    if (!picked) return null;
+    const path = await encode(picked.bytes, face.landscape);
+    const key = deps.keyOf(lang, face.code, await readFile(path));
+    const landscapeOnPortrait = !face.landscape && (await deps.isLandscape(picked.bytes));
+    return { key, from: picked.from, path, landscapeOnPortrait };
+  };
+
   const load = (url: string) => deps.fetchImage(url, httpDir);
-  for (const face of sources.faces) {
-    const entry: Record<string, { key: string; from: string }> = {};
-    const en = await deps.pickEnglish(face, octgnEn, load);
-    if (en) {
-      const avif = await encode(en.bytes, face.landscape);
-      const key = deps.keyOf("en", face.code, avif);
-      files.set(key, avif);
-      entry.en = { key, from: en.from };
-      report.faces.en++;
-      report.from[en.from] = (report.from[en.from] ?? 0) + 1;
-    } else {
-      report.noEnglish.push(face.code);
+  const results: FaceResult[] = await mapWithConcurrency(faces, FACE_CONCURRENCY, async (face) => ({
+    code: face.code,
+    en: await encodeFace("en", face, await deps.pickEnglish(face, octgnEn, load)),
+    fr: await encodeFace("fr", face, deps.pickFrench(face, octgnFr)),
+  }));
+
+  // Folded in sources order, so the report does not depend on which face finished first.
+  const files = new Map<string, string>();
+  const manifestFaces: Manifest["faces"] = {};
+  for (const result of results) {
+    const entry: Manifest["faces"][string] = {};
+    for (const lang of LANGS) {
+      const image = result[lang];
+      if (!image) continue;
+      files.set(image.key, image.path);
+      entry[lang] = { key: image.key, from: image.from };
+      report.faces[lang]++;
+      report.from[lang][image.from] = (report.from[lang][image.from] ?? 0) + 1;
+      if (image.landscapeOnPortrait) report.landscapeOnPortrait.push(`${lang}/${result.code}`);
     }
-    const fr = deps.pickFrench(face, octgnFr);
-    if (fr) {
-      const avif = await encode(fr.bytes, face.landscape);
-      const key = deps.keyOf("fr", face.code, avif);
-      files.set(key, avif);
-      entry.fr = { key, from: fr.from };
-      report.faces.fr++;
-      report.from[fr.from] = (report.from[fr.from] ?? 0) + 1;
-    } else {
-      report.frenchGaps.push(face.code);
-    }
-    if (entry.en || entry.fr) faces[face.code] = entry;
+    if (!result.en) report.noEnglish.push(result.code);
+    if (!result.fr) report.frenchGaps.push(result.code);
+    if (entry.en || entry.fr) manifestFaces[result.code] = entry;
   }
 
   const assets: Record<string, string> = {};
   for (const [name, url] of Object.entries(opts.assets ?? DEFAULT_ASSETS)) {
     const bytes = await deps.fetchImage(url, httpDir);
     if (!bytes) throw new Error(`asset ${name} not loadable: ${url}`);
-    const avif = await encode(bytes, false);
     const key = `assets/${name}.avif`;
-    files.set(key, avif);
+    files.set(key, await encode(bytes, false));
     assets[name] = key;
   }
 
@@ -160,12 +237,11 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   report.uploaded = await deps.uploadMissing(opts.client, opts.bucket, files, existing);
 
   // Manifest last: a failed upload above throws before this point.
-  const sortObj = <T>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  const manifest = {
+  const manifest: Manifest = {
     version: 1,
-    base: "https://img.intothefray.xyz/",
-    faces: sortObj(Object.fromEntries(Object.entries(faces).map(([c, e]) => [c, sortObj(e)]))),
-    assets: sortObj(assets),
+    base: BASE_URL,
+    faces: sortByKey(manifestFaces),
+    assets: sortByKey(assets),
   };
   const dest = join(opts.appDir, "packs/images/manifest.json");
   await writeFile(dest + ".tmp", JSON.stringify(manifest, null, 2) + "\n");
@@ -175,52 +251,28 @@ export async function runPublish(deps: Deps, opts: Opts): Promise<Report> {
   return report;
 }
 
-async function loadEnv(): Promise<void> {
-  try {
-    for (const line of (await readFile(".env", "utf8")).split("\n")) {
-      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
-      if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
-    }
-  } catch {}
-}
-
 async function main(): Promise<void> {
-  await loadEnv();
-  const need = (k: string) => {
-    const v = process.env[k];
-    if (!v) throw new Error(`missing env ${k}`);
-    return v;
-  };
-  const [{ S3Client }, drive, o8c, encode, resolve, http, r2] = await Promise.all([
-    import("@aws-sdk/client-s3"),
-    import("./drive.ts"),
-    import("./o8c.ts"),
-    import("./encode.ts"),
-    import("./resolve.ts"),
-    import("./http.ts"),
-    import("./r2.ts"),
-  ]);
-  const client = new S3Client({
-    region: "auto",
-    endpoint: `https://${need("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com`,
-    credentials: { accessKeyId: need("R2_ACCESS_KEY_ID"), secretAccessKey: need("R2_SECRET_ACCESS_KEY") },
-  });
+  // The single place .env is read; existing environment variables are not overridden.
+  if (existsSync(".env")) process.loadEnvFile(".env");
+  const bucket = process.env.R2_BUCKET;
+  if (!bucket) throw new Error("missing env R2_BUCKET");
   const deps: Deps = {
-    fetchText: async (u) => (await fetch(u)).text(),
-    parseListing: drive.parseListing,
-    selectOfficial: drive.selectOfficial,
-    fetchPack: (f, dir) => drive.fetchPack(f, dir, fetch),
-    readImages: o8c.readImages,
-    normalize: encode.normalize,
-    keyOf: encode.keyOf,
-    pickEnglish: resolve.pickEnglish,
-    pickFrench: resolve.pickFrench,
-    fetchImage: (u, dir) => http.fetchImage(u, dir, fetch),
-    listKeys: r2.listKeys,
-    uploadMissing: r2.uploadMissing,
+    fetchText: (url) => fetchListing(url, fetch),
+    parseListing,
+    selectOfficial,
+    fetchPack: (file, dir) => fetchPack(file, dir, fetch),
+    readImages,
+    normalize,
+    isLandscape,
+    keyOf,
+    pickEnglish,
+    pickFrench,
+    fetchImage: (url, dir) => fetchImage(url, dir, fetch),
+    listKeys,
+    uploadMissing,
   };
   const appDir = process.argv[2] ?? process.env.APP_DIR ?? "../../intothefray";
-  await runPublish(deps, { appDir, cacheDir: ".cache", client, bucket: need("R2_BUCKET"), log: console.log });
+  await runPublish(deps, { appDir, cacheDir: ".cache", client: createClient(process.env), bucket, log: console.log });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

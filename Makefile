@@ -3,13 +3,6 @@
 
 .DEFAULT_GOAL := help
 
-# Environment from .env, loaded for every target when present.
-# A missing .env file is not an error.
-ifneq (,$(wildcard .env))
-include .env
-export
-endif
-
 APP_DIR ?= ../../intothefray
 
 ##@ Setup
@@ -23,7 +16,7 @@ install: ## Install dependencies from the lockfile
 .PHONY: publish
 publish: ## Sync sources, upload new images and write the manifest
 	$(MAKE) -C $(APP_DIR) sources
-	node src/publish.ts
+	node src/publish.ts $(APP_DIR)
 	$(MAKE) -C $(APP_DIR) packs
 
 .PHONY: refresh

@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { fetchPack, parseListing, selectOfficial } from "./drive.ts";
+import { fetchListing, fetchPack, parseListing, selectOfficial } from "./drive.ts";
 
 const entry = (id: string, name: string) =>
   `<div class="flip-entry" id="entry-${id}" tabindex="0" role="link"><div class="flip-entry-info"><a href="https://drive.google.com/file/d/${id}/view?usp=drive_web" target="_blank"><div class="flip-entry-visual"></div><div class="flip-entry-title">${name}</div></a></div><div class="flip-entry-last-modified"><div>3/26/23</div></div></div>`;
@@ -23,18 +23,29 @@ describe("parseListing", () => {
 describe("selectOfficial", () => {
   it("keeps official packs sorted by number", () => {
     const out = selectOfficial([
-      f("a", "060 - Fear No Evil - 2026-08-29.o8c"),
-      f("b", "998 - FM - Angela (By Odysseus) - x.o8c"),
-      f("c", "990 - Errata Pack ENG - 20240502.o8c"),
-      f("d", "997 - Fan.o8c"),
+      f("a", "060 - Fear No Evil - 2026-08-29.o8c", 60),
+      f("b", "998 - FM - Angela (By Odysseus) - x.o8c", 998),
+      f("c", "990 - Errata Pack ENG - 20240502.o8c", 990),
+      f("d", "997 - Fan.o8c", 997),
       f("e", "FM - nothing.o8c"),
-      f("g", "010 - A - FM - B.o8c"),
+      f("g", "010 - A - FM - B.o8c", 10),
     ]);
     expect(out.map((x) => [x.id, x.number])).toEqual([["a", 60], ["c", 990]]);
   });
   it(".o8c.o8c name accepted", () => {
-    const out = selectOfficial([f("x", "032 - Y - z.o8c.o8c"), f("y", "057 - Q - fr.o8c")]);
+    const out = selectOfficial([f("x", "032 - Y - z.o8c.o8c", 32), f("y", "057 - Q - fr.o8c", 57)]);
     expect(out.map((x) => x.number)).toEqual([32, 57]);
+  });
+});
+
+describe("fetchListing", () => {
+  it("returns the page", async () => {
+    const fn = vi.fn(async () => new Response("<html>ok</html>"));
+    expect(await fetchListing("https://d/x", fn as unknown as typeof fetch)).toBe("<html>ok</html>");
+  });
+  it("throws on an error page instead of returning it", async () => {
+    const fn = vi.fn(async () => new Response("<html>quota</html>", { status: 429 }));
+    await expect(fetchListing("https://d/x", fn as unknown as typeof fetch)).rejects.toThrow("HTTP 429");
   });
 });
 

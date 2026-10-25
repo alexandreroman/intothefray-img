@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { S3Client } from "@aws-sdk/client-s3";
 import { createClient, listKeys, uploadMissing } from "./r2.ts";
@@ -13,6 +16,18 @@ function fake(handler: (c: Cmd) => unknown) {
     },
   } as unknown as S3Client;
   return { client, calls };
+}
+
+/** Writes each body to a temporary file and returns the key to path map. */
+function onDisk(bodies: Record<string, string>): Map<string, string> {
+  const dir = mkdtempSync(join(tmpdir(), "r2-"));
+  const files = new Map<string, string>();
+  for (const [key, body] of Object.entries(bodies)) {
+    const path = join(dir, key.replaceAll("/", "_"));
+    writeFileSync(path, body);
+    files.set(key, path);
+  }
+  return files;
 }
 
 describe("r2", () => {
@@ -35,12 +50,11 @@ describe("r2", () => {
 
   it("headers", async () => {
     const { client, calls } = fake(() => ({}));
-    const body = Buffer.from("x");
-    await uploadMissing(client, "bk", new Map([["en/a.1.avif", body]]), new Set());
+    await uploadMissing(client, "bk", onDisk({ "en/a.1.avif": "x" }), new Set());
     expect(calls[0].input).toEqual({
       Bucket: "bk",
       Key: "en/a.1.avif",
-      Body: body,
+      Body: Buffer.from("x"),
       ContentType: "image/avif",
       CacheControl: "public, max-age=31536000, immutable",
     });
@@ -48,11 +62,7 @@ describe("r2", () => {
 
   it("uploads only missing, sorted", async () => {
     const { client, calls } = fake(() => ({}));
-    const files = new Map([
-      ["en/b.2.avif", Buffer.from("b")],
-      ["en/a.1.avif", Buffer.from("a")],
-      ["en/c.3.avif", Buffer.from("c")],
-    ]);
+    const files = onDisk({ "en/b.2.avif": "b", "en/a.1.avif": "a", "en/c.3.avif": "c" });
     const out = await uploadMissing(client, "b", files, new Set(["en/a.1.avif"]));
     expect(out).toEqual(["en/b.2.avif", "en/c.3.avif"]);
     expect(calls.map((c) => c.constructor.name).every((n) => n === "PutObjectCommand")).toBe(true);
@@ -63,7 +73,7 @@ describe("r2", () => {
       throw new Error("boom");
     });
     await expect(
-      uploadMissing(client, "b", new Map([["k", Buffer.from("x")]]), new Set()),
+      uploadMissing(client, "b", onDisk({ k: "x" }), new Set()),
     ).rejects.toThrow("boom");
   });
 

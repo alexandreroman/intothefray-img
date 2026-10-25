@@ -11,11 +11,15 @@ type: project
   for fallback cards). French: the OCTGN French scan only; without one the
   face has no French entry and the client falls back to English. Jessica
   Jones and Luke Cage have no OCTGN pack, so they are English only.
+- An HTTP source has no image on 403, 404, 410 or a non-image 200; 429
+  and 5xx retry with backoff, then fail the run, so a transient error
+  never switches a face to another source.
 - Official OCTGN packs only: a leading number below 997 and no " - FM - ".
   Packs apply in number order, so the errata pack (990) wins.
 - Normalize in order: EXIF rotation, a landscape face stored portrait
   turns a quarter clockwise, conversion to sRGB, short edge at most
   600 px and never enlarged, AVIF quality 55, effort 6, no metadata.
+  A portrait face with a landscape image is reported, not turned.
 - Keys: `<lang>/<code>.<first 12 hex of the AVIF sha256>.avif`; assets
   (`back-player`, `back-encounter`, `back-villain`, `first-player`) use
   fixed keys `assets/<name>.avif`. Uploads carry

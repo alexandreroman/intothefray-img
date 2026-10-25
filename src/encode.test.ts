@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
-import { keyOf, normalize, SETTINGS_VERSION } from "./encode.ts";
+import { isLandscape, keyOf, normalize } from "./encode.ts";
 
 function solid(w: number, h: number, rgb: [number, number, number]) {
   return sharp({ create: { width: w, height: h, channels: 3, background: { r: rgb[0], g: rgb[1], b: rgb[2] } } });
@@ -47,6 +47,20 @@ describe("normalize", () => {
     expect(data[last + 2]).toBeLessThan(100);
   });
 
+  it("portrait into landscape turns, then caps the short edge", async () => {
+    const out = await sharp(await normalize(await jpeg(700, 1000), true)).metadata();
+    expect([out.width, out.height]).toEqual([857, 600]);
+  });
+
+  it("EXIF orientation applies before the landscape turn", async () => {
+    // Stored 300x200, displayed 200x300: a portrait image for a landscape face.
+    const turned = await solid(300, 200, [1, 2, 3]).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+    const out = await sharp(await normalize(turned, true)).metadata();
+    expect([out.width, out.height]).toEqual([300, 200]);
+    const kept = await sharp(await normalize(turned, false)).metadata();
+    expect([kept.width, kept.height]).toEqual([200, 300]);
+  });
+
   it("CMYK fixture becomes sRGB", async () => {
     const cmyk = await solid(200, 300, [200, 50, 50]).toColourspace("cmyk").jpeg().toBuffer();
     const inMeta = await sharp(cmyk).metadata();
@@ -66,11 +80,20 @@ describe("normalize", () => {
   });
 });
 
+describe("isLandscape", () => {
+  it("compares the oriented width and height", async () => {
+    expect(await isLandscape(await jpeg(699, 492))).toBe(true);
+    expect(await isLandscape(await jpeg(492, 699))).toBe(false);
+  });
+
+  it("applies the EXIF orientation", async () => {
+    const turned = await solid(300, 200, [1, 2, 3]).withMetadata({ orientation: 6 }).jpeg().toBuffer();
+    expect(await isLandscape(turned)).toBe(false);
+  });
+});
+
 describe("keyOf", () => {
   it("hashes the avif bytes", () => {
     expect(keyOf("en", "12001a", Buffer.from("x"))).toBe("en/12001a.2d711642b726.avif");
-  });
-  it("exports a settings version", () => {
-    expect(typeof SETTINGS_VERSION).toBe("string");
   });
 });

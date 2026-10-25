@@ -45,7 +45,8 @@ Done once by hand.
 
 ## Configuration
 
-Copy `.env.example` to `.env` (gitignored) and fill it in:
+Copy `.env.example` to `.env` (gitignored) and fill it in. `src/publish.ts`
+reads it at startup; variables already set in the environment win:
 
 - `R2_ACCOUNT_ID`: the Cloudflare account id. The endpoint is
   `https://<account>.r2.cloudflarestorage.com`.
@@ -58,7 +59,7 @@ Copy `.env.example` to `.env` (gitignored) and fill it in:
 Tools are pinned in `mise.toml`: Node 24.22.0 and pnpm 12.14.0.
 
     mise install
-    pnpm install
+    make install
 
 ## Publish
 
@@ -68,7 +69,7 @@ Tools are pinned in `mise.toml`: Node 24.22.0 and pnpm 12.14.0.
 
 1. `make -C $(APP_DIR) sources`, which writes
    `packs/images/sources.json` in the app.
-2. `node src/publish.ts`, which does the steps above.
+2. `node src/publish.ts $(APP_DIR)`, which does the steps above.
 3. `make -C $(APP_DIR) packs`, which writes `packs/dist` from the
    manifest.
 

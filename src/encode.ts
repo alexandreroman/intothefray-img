@@ -4,21 +4,30 @@ import sharp from "sharp";
 export const SETTINGS_VERSION = "avif-q55-e6-s600-v1";
 const MAX_SHORT_EDGE = 600;
 
+/** Width and height of an image once its EXIF orientation is applied. */
+async function orientedSize(input: Buffer): Promise<{ width: number; height: number }> {
+  const { autoOrient } = await sharp(input).metadata();
+  return autoOrient;
+}
+
+/** Whether the image, once its EXIF orientation is applied, is wider than tall. */
+export async function isLandscape(input: Buffer): Promise<boolean> {
+  const { width, height } = await orientedSize(input);
+  return width > height;
+}
+
 export async function normalize(input: Buffer, landscape: boolean): Promise<Buffer> {
-  // Apply EXIF rotation first, then read the real orientation.
-  const oriented = await sharp(input).rotate().toBuffer({ resolveWithObject: true });
-  const { width, height } = oriented.info;
-  let img = sharp(oriented.data);
-  let w = width;
-  let h = height;
-  if (landscape && h > w) {
-    img = sharp(await img.rotate(90).toBuffer());
-    [w, h] = [h, w];
+  let { width, height } = await orientedSize(input);
+  // A single pipeline: no intermediate re-encode before the AVIF output.
+  let img = sharp(input).autoOrient();
+  if (landscape && height > width) {
+    img = img.rotate(90);
+    [width, height] = [height, width];
   }
-  const short = Math.min(w, h);
+  const short = Math.min(width, height);
   if (short > MAX_SHORT_EDGE) {
     const scale = MAX_SHORT_EDGE / short;
-    img = img.resize(Math.round(w * scale), Math.round(h * scale), { fit: "fill" });
+    img = img.resize(Math.round(width * scale), Math.round(height * scale), { fit: "fill" });
   }
   return img
     .toColourspace("srgb")
