@@ -21,7 +21,7 @@
 > only makes sense knowing the prior state,
 > rewrite it.
 
-- [Objective](references/project_objective.md) — card image CDN filler for intothefray, private, run locally
+- [Objective](references/project_objective.md) — card image CDN filler for Into the Fray, public repo, run locally
 - [Tech stack](references/project_tech_stack.md) — TypeScript on Node 24, sharp, fflate, AWS S3 SDK, vitest
 - [Image rules](references/project_image_rules.md) — source precedence, AVIF settings, assets keep orientation, explicit keys, never delete
 - [Cloudflare R2](references/project_cloudflare.md) — bucket, custom domain, token in .env, setup by the user

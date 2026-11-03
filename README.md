@@ -1,7 +1,7 @@
 # intothefray-img
 
-Private tool that publishes the card images of
-[intothefray](https://github.com/alexandreroman/intothefray) to
+Tool that publishes the card images of
+[Into the Fray](https://github.com/alexandreroman/intothefray) to
 `https://img.intothefray.xyz`.
 
 `make publish` downloads the English and French card scans, optimizes
