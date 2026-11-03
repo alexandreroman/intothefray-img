@@ -1,4 +1,4 @@
-# intothefray-img
+# Into the Fray Images
 
 Tool that publishes the card images of Into the Fray to
 `img.intothefray.xyz` (Cloudflare R2, AVIF).

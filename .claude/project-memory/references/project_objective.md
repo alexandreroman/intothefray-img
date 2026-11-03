@@ -1,12 +1,12 @@
 ---
 name: "Objective"
-description: "intothefray-img fills the card image CDN of Into the Fray from the user's machine"
+description: "Into the Fray Images fills the card image CDN of Into the Fray from the user's machine"
 type: project
 ---
 
 # Objective
 
-intothefray-img stores the English and French Marvel Champions card scans
+Into the Fray Images stores the English and French Marvel Champions card scans
 used by the Into the Fray app on `https://img.intothefray.xyz` (Cloudflare
 R2), optimized for browsers. It is a public repository
 (`alexandreroman/intothefray-img`); its one user is the app maintainer, who
